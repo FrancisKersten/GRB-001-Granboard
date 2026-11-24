@@ -1,9 +1,4 @@
-
-# ============================================
-# GABARIT UNIVERSEL - GITHUB PAGES
-# ============================================
-# SEULE VARIABLE A MODIFIER POUR UN NOUVEAU PROJET
-
+# GABARIT UNIVERSEL - modifier uniquement PROJET
 env:
   PROJET: GRB-001
 
@@ -26,11 +21,9 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
       - name: Recuperer les fichiers
         uses: actions/checkout@v4
@@ -41,192 +34,90 @@ jobs:
           python3 - <<'PY'
           import os
           import re
-          import stat
           import shutil
+          import stat
           import zipfile
           from pathlib import Path, PurePosixPath
 
-          # =====================================
-          # CONFIGURATION AUTOMATIQUE
-          # =====================================
-
-          PROJET = os.environ["PROJET"]
-
-          # Nom reconnu :
-          # MUS-001_v017.zip
-          # MUS-001_v017 Description libre.zip
-
-          pattern = re.compile(
-              rf'^{re.escape(PROJET)}_v([0-9]{{3}})(?:[ _-].+)?\.zip$',
-              re.IGNORECASE
-          )
-
-          # =====================================
-          # RECHERCHE DES VERSIONS
-          # =====================================
-
+          projet = os.environ['PROJET']
+          pattern = re.compile(rf'^{re.escape(projet)}_V([0-9]{{3}})(?:[ _-].+)?\.zip$', re.IGNORECASE)
           candidates = []
-
           for path in Path('.').iterdir():
               if path.is_file():
                   match = pattern.fullmatch(path.name)
                   if match:
-                      version = int(match.group(1))
-                      candidates.append((version, path))
+                      candidates.append((int(match.group(1)), path))
 
           if not candidates:
-              raise SystemExit(
-                  f'ERREUR : aucun ZIP {PROJET}_vNNN trouve.'
-              )
-
-          latest = max(v for v, _ in candidates)
-
-          matches = [
-              path for v, path in candidates
-              if v == latest
-          ]
-
+              raise SystemExit(f'ERREUR : aucun ZIP {projet}_VNNN.zip trouve a la racine du depot.')
+          latest = max(number for number, _ in candidates)
+          matches = [path for number, path in candidates if number == latest]
           if len(matches) != 1:
-              raise SystemExit(
-                  f'ERREUR : plusieurs ZIP pour v{latest:03d}: {matches}'
-              )
-
+              raise SystemExit(f'ERREUR : plusieurs ZIP pour la version V{latest:03d}: {matches}')
           archive = matches[0]
-
-          print(f'Projet : {PROJET}', flush=True)
-          print(f'Version : v{latest:03d}', flush=True)
-          print(f'Archive : {archive.name}', flush=True)
-
-          # =====================================
-          # EXTRACTION SECURISEE
-          # =====================================
+          print(f'Publication : {archive.name}', flush=True)
 
           output = Path('_site')
-
           if output.exists():
               shutil.rmtree(output)
-
           output.mkdir()
-
           try:
               with zipfile.ZipFile(archive) as z:
-
                   entries = []
-
                   for info in z.infolist():
                       if info.is_dir():
                           continue
-
                       name = info.filename
                       path = PurePosixPath(name)
-
-                      if (
-                          name.startswith('__MACOSX/')
-                          or path.name == '.DS_Store'
-                      ):
+                      if name.startswith('__MACOSX/') or path.name == '.DS_Store':
                           continue
-
-                      if (
-                          name.startswith('/')
-                          or '\\' in name
-                          or ':' in name
-                          or '..' in path.parts
-                          or not path.parts
-                      ):
-                          raise SystemExit(
-                              f'ERREUR : chemin interdit : {name}'
-                          )
-
-                      mode = info.external_attr >> 16
-
+                      if (name.startswith('/') or '\\' in name or ':' in name
+                              or '..' in path.parts or not path.parts):
+                          raise SystemExit(f'ERREUR : chemin non autorise : {name}')
+                      mode = (info.external_attr >> 16)
                       if stat.S_IFMT(mode) == stat.S_IFLNK:
-                          raise SystemExit(
-                              f'ERREUR : lien symbolique : {name}'
-                          )
-
+                          raise SystemExit(f'ERREUR : lien symbolique interdit : {name}')
                       entries.append((info, path))
-
                   if not entries:
-                      raise SystemExit('ERREUR : ZIP vide.')
-
-                  # index.html a la racine
-                  # ou dans un dossier principal unique
+                      raise SystemExit('ERREUR : archive vide.')
 
                   paths = [p for _, p in entries]
-
                   if PurePosixPath('index.html') in paths:
                       strip = False
-
                   else:
                       roots = {p.parts[0] for p in paths}
-
                       if len(roots) != 1:
-                          raise SystemExit(
-                              'ERREUR : structure ZIP invalide.'
-                          )
-
+                          raise SystemExit('ERREUR : index.html absent de la racine ou du dossier unique.')
                       root = next(iter(roots))
-
                       if PurePosixPath(root, 'index.html') not in paths:
-                          raise SystemExit(
-                              'ERREUR : index.html absent.'
-                          )
-
+                          raise SystemExit('ERREUR : index.html absent du dossier principal.')
                       strip = True
 
                   seen = set()
-
                   for info, path in entries:
-
-                      relative = (
-                          PurePosixPath(*path.parts[1:])
-                          if strip else path
-                      )
-
+                      relative = PurePosixPath(*path.parts[1:]) if strip else path
                       if not relative.parts or relative in seen:
-                          raise SystemExit(
-                              f'ERREUR : fichier duplique : {path}'
-                          )
-
+                          raise SystemExit(f'ERREUR : fichier duplique ou invalide : {path}')
                       seen.add(relative)
-
-                      destination = output.joinpath(
-                          *relative.parts
-                      )
-
-                      destination.parent.mkdir(
-                          parents=True,
-                          exist_ok=True
-                      )
-
-                      with z.open(info) as source:
-                          with destination.open('wb') as target:
-                              shutil.copyfileobj(source, target)
-
+                      destination = output.joinpath(*relative.parts)
+                      destination.parent.mkdir(parents=True, exist_ok=True)
+                      with z.open(info) as source, destination.open('wb') as target:
+                          shutil.copyfileobj(source, target)
           except zipfile.BadZipFile as exc:
-              raise SystemExit(
-                  f'ERREUR : ZIP invalide : {exc}'
-              )
-
-          print(
-              f'Publication prete : {PROJET} v{latest:03d}',
-              flush=True
-          )
-
-          print(
-              f'Nombre de fichiers : {len(seen)}',
-              flush=True
-          )
-
+              raise SystemExit(f'ERREUR : ZIP invalide : {exc}')
+          print(f'Site pret : {len(seen)} fichiers, version V{latest:03d}', flush=True)
           PY
 
       - name: Configurer GitHub Pages
         uses: actions/configure-pages@v5
 
-      - name: Preparer les fichiers
+      - name: Preparer les fichiers a publier
         uses: actions/upload-pages-artifact@v3
         with:
           path: _site
+
+      - name: Attendre la disponibilite de l'artefact
+        run: sleep 30
 
       - name: Publier sur GitHub Pages
         id: deployment
